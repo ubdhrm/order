@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write   # needed to create releases
+  contents: write
 
 jobs:
   build:
@@ -68,20 +68,29 @@ jobs:
           echo "NEW_VERSION_CODE=$NEW_CODE" >> $GITHUB_ENV
           echo "Bumped versionCode to $NEW_CODE"
 
-      - name: Build APK
+      - name: Decode keystore
         working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release-key.jks
+
+      - name: Build Release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: HBStoreHub-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
 
       - name: Create GitHub Release (for auto-update)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.NEW_VERSION_CODE }}
           name: Release v${{ env.NEW_VERSION_CODE }}
-          files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
           generate_release_notes: true
