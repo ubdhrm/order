@@ -25,7 +25,6 @@ jobs:
           echo "Using: $ZIP"
           rm -rf project
           unzip -o "$ZIP" -d project
-          # Find the folder that holds settings.gradle (the real project root)
           SETTINGS="$(find project -maxdepth 3 -name settings.gradle | head -n 1)"
           if [ -z "$SETTINGS" ]; then
             echo "settings.gradle not found inside the zip"
@@ -82,14 +81,11 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           DEST="$PROJECT_DIR/app/release-key.jks"
-          if [ -f "release-key.jks" ]; then
-            echo "Keystore found in repo root - reusing it."
-            cp release-key.jks "$DEST"
-          elif [ -f "$PROJECT_DIR/release-key.jks" ]; then
-            echo "Keystore found inside the zip project - reusing it."
-            cp "$PROJECT_DIR/release-key.jks" "$DEST"
+          if [ -f "hbstore-key.jks" ]; then
+            echo "Existing HB Store keystore found - reusing it."
+            cp hbstore-key.jks "$DEST"
           else
-            echo "No keystore found - generating a new one (first time only)."
+            echo "Generating new HB Store keystore (first time only)."
             keytool -genkeypair -v \
               -keystore "$DEST" \
               -alias "$KEY_ALIAS" \
@@ -97,7 +93,7 @@ jobs:
               -storepass "$KEYSTORE_PASSWORD" \
               -keypass "$KEYSTORE_PASSWORD" \
               -dname "CN=HBStoreHub, OU=HBStoreHub, O=HBStoreHub, L=Kerala, S=Kerala, C=IN"
-            cp "$DEST" release-key.jks
+            cp "$DEST" hbstore-key.jks
           fi
           test -s "$DEST"
           echo "Keystore ready."
@@ -118,11 +114,11 @@ jobs:
 
       - name: Commit keystore to repo (only if newly generated)
         run: |
-          if [ -n "$(git status --porcelain release-key.jks)" ]; then
+          if [ -n "$(git status --porcelain hbstore-key.jks)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add release-key.jks
-            git commit -m "Add release signing keystore (auto-generated)"
+            git add hbstore-key.jks
+            git commit -m "Add HB Store release keystore (auto-generated)"
             git push
           else
             echo "Nothing to commit."
