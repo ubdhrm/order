@@ -29,21 +29,24 @@ jobs:
           gradle-version: '8.9'
 
       - name: Generate Gradle Wrapper
+        working-directory: HBStoreHubAndroid_Final
         run: |
           gradle wrapper --gradle-version 8.9
           chmod +x gradlew
 
       - name: Enable AndroidX
+        working-directory: HBStoreHubAndroid_Final
         run: |
           touch gradle.properties
           grep -q "android.useAndroidX" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
           grep -q "android.enableJetifier" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
 
       - name: Build APK
+        working-directory: HBStoreHubAndroid_Final
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HBStoreHub-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: HBStoreHubAndroid_Final/app/build/outputs/apk/debug/*.apk
