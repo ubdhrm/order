@@ -109,7 +109,7 @@ jobs:
 
 
       # ==================================================
-      # 5. Gradle 8.9
+      # 5. Install Gradle
       # ==================================================
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -168,15 +168,21 @@ jobs:
         run: |
           set -e
 
-          VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="1.0.${VERSION_CODE}"
+          # IMPORTANT:
+          # export makes these variables available to Python
+          export VERSION_CODE="${GITHUB_RUN_NUMBER}"
+          export VERSION_NAME="1.0.${VERSION_CODE}"
 
-          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
-          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          # Make them available to following GitHub Actions steps
+          echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=${VERSION_NAME}" >> "$GITHUB_ENV"
 
           echo ""
-          echo "Version Code : $VERSION_CODE"
-          echo "Version Name : $VERSION_NAME"
+          echo "======================================"
+          echo "Version information"
+          echo "======================================"
+          echo "Version Code : ${VERSION_CODE}"
+          echo "Version Name : ${VERSION_NAME}"
           echo ""
 
           if [ ! -f "app/build.gradle" ]; then
@@ -199,7 +205,9 @@ jobs:
           version_code = os.environ["VERSION_CODE"]
           version_name = os.environ["VERSION_NAME"]
 
-          # versionCode
+          # ------------------------------------------
+          # Update versionCode
+          # ------------------------------------------
           text, count_code = re.subn(
               r'(\bversionCode\s+)\d+',
               rf'\g<1>{version_code}',
@@ -207,7 +215,9 @@ jobs:
               count=1
           )
 
-          # versionName
+          # ------------------------------------------
+          # Update versionName
+          # ------------------------------------------
           text, count_name = re.subn(
               r'(\bversionName\s+)(["\']).*?\2',
               rf'\g<1>"{version_name}"',
@@ -227,11 +237,14 @@ jobs:
 
           path.write_text(text)
 
+          print("")
           print("Version updated successfully.")
+          print(f"versionCode = {version_code}")
+          print(f"versionName = {version_name}")
           PY
 
           echo ""
-          echo "Current version settings:"
+          echo "Final version settings:"
           grep -nE "versionCode|versionName" app/build.gradle
 
 
@@ -246,7 +259,9 @@ jobs:
         run: |
           set -e
 
+          echo "======================================"
           echo "Checking signing key..."
+          echo "======================================"
 
           DEST="$PROJECT_DIR/app/release-key.jks"
 
@@ -267,7 +282,7 @@ jobs:
             echo "ERROR: hbstore-key.jks not found in repository."
             echo ""
             echo "A new signing key will NOT be generated."
-            echo "This protects existing app updates from signing-key mismatch."
+            echo "This protects existing app updates."
             exit 1
           fi
 
@@ -288,7 +303,7 @@ jobs:
 
 
       # ==================================================
-      # 10. Build signed APK
+      # 10. Build signed release APK
       # ==================================================
       - name: Build signed release APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -308,7 +323,7 @@ jobs:
           ./gradlew clean assembleRelease --no-daemon --stacktrace
 
           echo ""
-          echo "Build completed."
+          echo "Build completed successfully."
 
 
       # ==================================================
@@ -345,7 +360,7 @@ jobs:
 
 
       # ==================================================
-      # 12. Upload GitHub Actions artifact
+      # 12. Upload APK artifact
       # ==================================================
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
