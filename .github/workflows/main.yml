@@ -1,143 +1,65 @@
 name: Release APK
 
 on:
-  push:
-    tags:
-      - 'v*-test'
-      - 'v[0-9]*'
-
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version number, example: 69'
-        required: false
-        type: string
-
-      release_type:
-        description: 'Release type'
-        required: false
-        type: choice
-        options:
-          - test
-          - stable
-
-      promote_tag:
-        description: 'Promote an existing test release, example: v69-test'
-        required: false
-        type: string
 
 permissions:
   contents: write
 
-
 jobs:
-
-  # ============================================================
-  # PROMOTE TEST RELEASE TO STABLE
-  # ============================================================
-
-  promote:
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.promote_tag != ''
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Promote test release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.promote_tag }}
-
-        run: |
-
-          echo "======================================"
-          echo "Promoting release: $TAG"
-          echo "======================================"
-
-          gh release edit "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --prerelease=false \
-            --latest=true
-
-          echo "======================================"
-          echo "Release promoted successfully"
-          echo "======================================"
-
-
-  # ============================================================
-  # BUILD APK
-  # ============================================================
-
   release:
-    if: >
-      github.event_name == 'push' ||
-      (
-        github.event_name == 'workflow_dispatch' &&
-        inputs.promote_tag == ''
-      )
-
     runs-on: ubuntu-latest
 
     steps:
 
-      # ========================================================
-      # CHECKOUT
-      # ========================================================
-
+      # ==================================================
+      # 1. Checkout repository
+      # ==================================================
       - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ========================================================
-      # EXTRACT ANDROID PROJECT ZIP
-      # ========================================================
-
+      # ==================================================
+      # 2. Find and extract Android ZIP
+      # ==================================================
       - name: Extract Android project
         shell: bash
-
         run: |
+          set -e
 
           echo "======================================"
-          echo "Searching for HBStoreHub Android ZIP..."
+          echo "Searching for Android project ZIP..."
           echo "======================================"
 
           ZIP="$(find . \
-            -maxdepth 3 \
+            -maxdepth 4 \
             -type f \
             -iname 'HBStoreHubAndroid*.zip' \
             -not -path './project/*' \
             | head -n 1)"
 
           if [ -z "$ZIP" ]; then
-
-            echo "ERROR: HBStoreHub Android ZIP not found."
-
             echo ""
-            echo "Repository files:"
-            find . -maxdepth 3 -type f | head -200
-
+            echo "ERROR: HBStoreHubAndroid ZIP not found."
+            echo ""
+            echo "Files found in repository:"
+            find . -maxdepth 4 -type f | head -300
             exit 1
-
           fi
 
-
-          echo "Using ZIP:"
+          echo ""
+          echo "ZIP found:"
           echo "$ZIP"
-
+          echo ""
 
           rm -rf project
-
           mkdir -p project
 
-
+          echo "Extracting ZIP..."
           unzip -o "$ZIP" -d project
 
-
           echo ""
-          echo "Searching for settings.gradle..."
-
+          echo "Searching for Gradle project..."
 
           SETTINGS="$(find project \
             -type f \
@@ -148,239 +70,136 @@ jobs:
             \) \
             | head -n 1)"
 
-
           if [ -z "$SETTINGS" ]; then
-
-            echo "ERROR: settings.gradle not found inside ZIP."
-
+            echo ""
+            echo "ERROR: settings.gradle or settings.gradle.kts not found."
             echo ""
             echo "Extracted files:"
-            find project -maxdepth 5 -type f | head -200
-
+            find project -maxdepth 7 -type f | head -300
             exit 1
-
           fi
-
 
           PROJECT_DIR="$(dirname "$SETTINGS")"
 
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-
           echo ""
-          echo "======================================"
-          echo "Android project:"
+          echo "Android project directory:"
           echo "$PROJECT_DIR"
-          echo "======================================"
-
+          echo ""
 
           ls -la "$PROJECT_DIR"
 
 
-      # ========================================================
-      # JAVA 17
-      # ========================================================
-
+      # ==================================================
+      # 3. Java 17
+      # ==================================================
       - name: Set up Java
         uses: actions/setup-java@v4
-
         with:
           distribution: temurin
           java-version: '17'
 
 
-      # ========================================================
-      # ANDROID SDK
-      # ========================================================
-
+      # ==================================================
+      # 4. Android SDK
+      # ==================================================
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
 
-      # ========================================================
-      # GRADLE
-      # ========================================================
-
+      # ==================================================
+      # 5. Gradle 8.9
+      # ==================================================
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
-
         with:
           gradle-version: '8.9'
 
 
-      # ========================================================
-      # GENERATE GRADLE WRAPPER
-      # ========================================================
-
+      # ==================================================
+      # 6. Generate Gradle Wrapper
+      # ==================================================
       - name: Generate Gradle Wrapper
         working-directory: ${{ env.PROJECT_DIR }}
-
+        shell: bash
         run: |
+          set -e
+
+          echo "Generating Gradle wrapper..."
 
           gradle wrapper --gradle-version 8.9
 
           chmod +x gradlew
 
+          echo "Gradle wrapper ready."
 
-      # ========================================================
-      # ENABLE ANDROIDX
-      # ========================================================
 
+      # ==================================================
+      # 7. Enable AndroidX
+      # ==================================================
       - name: Enable AndroidX
         working-directory: ${{ env.PROJECT_DIR }}
-
+        shell: bash
         run: |
+          set -e
 
           touch gradle.properties
 
+          if ! grep -q "^android.useAndroidX=" gradle.properties; then
+            echo "android.useAndroidX=true" >> gradle.properties
+          fi
 
-          grep -q "android.useAndroidX" gradle.properties \
-            || echo "android.useAndroidX=true" >> gradle.properties
+          if ! grep -q "^android.enableJetifier=" gradle.properties; then
+            echo "android.enableJetifier=true" >> gradle.properties
+          fi
 
-
-          grep -q "android.enableJetifier" gradle.properties \
-            || echo "android.enableJetifier=true" >> gradle.properties
-
-
-          echo "======================================"
-          echo "gradle.properties"
-          echo "======================================"
-
+          echo ""
+          echo "gradle.properties:"
           cat gradle.properties
 
 
-      # ========================================================
-      # SET VERSION
-      # ========================================================
-
+      # ==================================================
+      # 8. Set Android version
+      # ==================================================
       - name: Set version
         working-directory: ${{ env.PROJECT_DIR }}
-
+        shell: bash
         run: |
+          set -e
 
-          # ----------------------------------------------------
-          # Get tag / version
-          # ----------------------------------------------------
-
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-
-            TAG="${GITHUB_REF_NAME}"
-
-          else
-
-            VERSION="${{ inputs.version }}"
-            TYPE="${{ inputs.release_type }}"
-
-
-            if [ -z "$VERSION" ]; then
-
-              echo "ERROR: Version is required."
-
-              exit 1
-
-            fi
-
-
-            if [ "$TYPE" = "test" ]; then
-
-              TAG="v${VERSION}-test"
-
-            elif [ "$TYPE" = "stable" ]; then
-
-              TAG="v${VERSION}"
-
-            else
-
-              echo "ERROR: release_type must be test or stable."
-
-              exit 1
-
-            fi
-
-          fi
-
-
-          # ----------------------------------------------------
-          # Extract version code
-          # ----------------------------------------------------
-
-          VERSION_CODE="${TAG#v}"
-
-          VERSION_CODE="${VERSION_CODE%%-*}"
-
-
-          if ! [[ "$VERSION_CODE" =~ ^[0-9]+$ ]]; then
-
-            echo "ERROR: Invalid version/tag:"
-            echo "$TAG"
-
-            exit 1
-
-          fi
-
-
+          VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${VERSION_CODE}"
 
-
-          # ----------------------------------------------------
-          # Determine release type
-          # ----------------------------------------------------
-
-          if [[ "$TAG" == *"-test" ]]; then
-
-            RELEASE_TYPE="test"
-
-          else
-
-            RELEASE_TYPE="stable"
-
-          fi
-
-
-          # ----------------------------------------------------
-          # Export variables
-          # ----------------------------------------------------
-
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
-
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
 
-          echo "RELEASE_TYPE=$RELEASE_TYPE" >> "$GITHUB_ENV"
-
-
           echo ""
-          echo "======================================"
-          echo "Release information"
-          echo "======================================"
-          echo "TAG          : $TAG"
-          echo "VERSION CODE : $VERSION_CODE"
-          echo "VERSION NAME : $VERSION_NAME"
-          echo "TYPE         : $RELEASE_TYPE"
-          echo "======================================"
+          echo "Version Code : $VERSION_CODE"
+          echo "Version Name : $VERSION_NAME"
+          echo ""
 
+          if [ ! -f "app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle not found."
 
-          # ----------------------------------------------------
-          # Update build.gradle
-          # ----------------------------------------------------
+            find . -maxdepth 5 -type f | head -300
+
+            exit 1
+          fi
 
           python3 - <<'PY'
-
           from pathlib import Path
+          import os
           import re
 
           path = Path("app/build.gradle")
 
           text = path.read_text()
 
-          version_code = "${{ env.VERSION_CODE }}"
-          version_name = "${{ env.VERSION_NAME }}"
+          version_code = os.environ["VERSION_CODE"]
+          version_name = os.environ["VERSION_NAME"]
 
-
-          # Replace versionCode
-
+          # versionCode
           text, count_code = re.subn(
               r'(\bversionCode\s+)\d+',
               rf'\g<1>{version_code}',
@@ -388,223 +207,161 @@ jobs:
               count=1
           )
 
-
-          # Replace single quoted versionName
-
-          text, count_name_single = re.subn(
-              r"(\bversionName\s+)'[^']*'",
-              rf"\g<1>'{version_name}'",
+          # versionName
+          text, count_name = re.subn(
+              r'(\bversionName\s+)(["\']).*?\2',
+              rf'\g<1>"{version_name}"',
               text,
               count=1
           )
 
-
-          # Replace double quoted versionName if needed
-
-          if count_name_single == 0:
-
-              text, count_name_double = re.subn(
-                  r'(\bversionName\s+)"[^"]*"',
-                  rf'\g<1>"{version_name}"',
-                  text,
-                  count=1
-              )
-
-          else:
-
-              count_name_double = 0
-
-
           if count_code == 0:
-
               raise SystemExit(
                   "ERROR: versionCode not found in app/build.gradle"
               )
 
-
-          if count_name_single == 0 and count_name_double == 0:
-
+          if count_name == 0:
               raise SystemExit(
                   "ERROR: versionName not found in app/build.gradle"
               )
 
-
           path.write_text(text)
 
-          print("Updated Android version:")
-          print(f"versionCode = {version_code}")
-          print(f"versionName = {version_name}")
-
+          print("Version updated successfully.")
           PY
 
-
           echo ""
+          echo "Current version settings:"
           grep -nE "versionCode|versionName" app/build.gradle
 
 
-      # ========================================================
-      # RESTORE EXISTING SIGNING KEY
-      # ========================================================
-
+      # ==================================================
+      # 9. Restore existing signing key
+      # ==================================================
       - name: Restore signing key
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-
+        shell: bash
         run: |
+          set -e
+
+          echo "Checking signing key..."
 
           DEST="$PROJECT_DIR/app/release-key.jks"
 
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo ""
+            echo "ERROR: KEYSTORE_PASSWORD secret is missing."
+            exit 1
+          fi
 
-          echo "======================================"
-          echo "Checking HB Store signing key"
-          echo "======================================"
-
+          if [ -z "$KEY_ALIAS" ]; then
+            echo ""
+            echo "ERROR: KEY_ALIAS secret is missing."
+            exit 1
+          fi
 
           if [ ! -f "hbstore-key.jks" ]; then
-
             echo ""
-            echo "ERROR: hbstore-key.jks was not found."
+            echo "ERROR: hbstore-key.jks not found in repository."
             echo ""
-            echo "The existing production signing key is required."
-            echo "Do NOT generate a new key if this app is already"
-            echo "installed on shops/devices."
-            echo ""
-
+            echo "A new signing key will NOT be generated."
+            echo "This protects existing app updates from signing-key mismatch."
             exit 1
-
           fi
 
+          mkdir -p "$PROJECT_DIR/app"
 
-          cp hbstore-key.jks "$DEST"
-
+          cp "hbstore-key.jks" "$DEST"
 
           if [ ! -s "$DEST" ]; then
-
+            echo ""
             echo "ERROR: release-key.jks is empty."
-
             exit 1
-
           fi
 
+          echo ""
+          echo "Existing signing key restored successfully."
+          echo "Key location:"
+          echo "$DEST"
 
-          echo "Existing HB Store signing key restored successfully."
 
-
-      # ========================================================
-      # BUILD SIGNED APK
-      # ========================================================
-
+      # ==================================================
+      # 10. Build signed APK
+      # ==================================================
       - name: Build signed release APK
         working-directory: ${{ env.PROJECT_DIR }}
-
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-
+        shell: bash
         run: |
+          set -e
 
           chmod +x gradlew
 
-
           echo "======================================"
-          echo "Building signed APK"
+          echo "Building signed release APK..."
           echo "======================================"
 
+          ./gradlew clean assembleRelease --no-daemon --stacktrace
 
-          ./gradlew clean assembleRelease --no-daemon
+          echo ""
+          echo "Build completed."
 
 
-      # ========================================================
-      # PREPARE APK
-      # ========================================================
-
+      # ==================================================
+      # 11. Prepare APK
+      # ==================================================
       - name: Prepare APK
+        shell: bash
         run: |
+          set -e
 
           APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
 
-
           if [ ! -f "$APK" ]; then
+            echo ""
+            echo "ERROR: app-release.apk not found."
 
-            echo "ERROR: APK was not created."
+            echo ""
+            echo "Available output files:"
+            find "$PROJECT_DIR/app/build/outputs" \
+              -type f \
+              2>/dev/null || true
 
             exit 1
-
           fi
-
 
           cp "$APK" HBStoreHub.apk
 
-
+          echo ""
           echo "======================================"
-          echo "APK created"
+          echo "APK ready"
           echo "======================================"
-
 
           ls -lh HBStoreHub.apk
 
 
-      # ========================================================
-      # UPLOAD APK ARTIFACT
-      # ========================================================
-
+      # ==================================================
+      # 12. Upload GitHub Actions artifact
+      # ==================================================
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
-
         with:
-          name: HBStoreHub-APK-${{ env.TAG }}
+          name: HBStoreHub-APK
           path: HBStoreHub.apk
+          if-no-files-found: error
 
 
-      # ========================================================
-      # CREATE GITHUB RELEASE
-      # ========================================================
-
+      # ==================================================
+      # 13. Create GitHub Release
+      # ==================================================
       - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-        run: |
-
-          echo "======================================"
-          echo "Creating GitHub release"
-          echo "======================================"
-
-
-          if [ "$RELEASE_TYPE" = "test" ]; then
-
-            echo "Release type: TEST"
-
-
-            gh release create "$TAG" \
-              HBStoreHub.apk \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "HB Store Hub ${TAG} (TEST)" \
-              --notes "Admin test release. Shops and storekeepers continue using the latest stable release." \
-              --prerelease
-
-
-          else
-
-            echo "Release type: STABLE"
-
-
-            gh release create "$TAG" \
-              HBStoreHub.apk \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "HB Store Hub ${TAG}" \
-              --notes "Stable release for all users." \
-              --latest
-
-          fi
-
-
-          echo ""
-          echo "======================================"
-          echo "RELEASE COMPLETED"
-          echo "======================================"
-          echo "Tag     : $TAG"
-          echo "Version : $VERSION_NAME"
-          echo "Type    : $RELEASE_TYPE"
-          echo "======================================"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_CODE }}
+          name: HB Store Hub v${{ env.VERSION_NAME }}
+          generate_release_notes: true
+          files: HBStoreHub.apk
