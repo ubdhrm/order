@@ -1,4 +1,4 @@
-name: Android Release
+ name: Android Release
 
 on:
   push:
@@ -8,8 +8,21 @@ on:
 
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version number (example: 69)'
+        required: true
+        type: string
+
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - test
+          - stable
+
       promote_tag:
-        description: 'Existing test tag to promote to the latest stable release (for example v69-test)'
+        description: 'Leave empty. Only use this to promote an existing test release, example: v69-test'
         required: false
         type: string
 
@@ -19,10 +32,13 @@ permissions:
 jobs:
 
   # ============================================================
-  # PROMOTE A TEST RELEASE TO STABLE
+  # PROMOTE EXISTING TEST RELEASE
   # ============================================================
   promote:
-    if: github.event_name == 'workflow_dispatch' && inputs.promote_tag != ''
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      inputs.promote_tag != ''
+
     runs-on: ubuntu-latest
 
     steps:
@@ -32,30 +48,40 @@ jobs:
           TAG: ${{ inputs.promote_tag }}
 
         run: |
+          echo "Promoting $TAG to stable..."
+
           gh release edit "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease=false \
             --latest=true
 
+          echo "Release promoted successfully."
+
 
   # ============================================================
-  # BUILD AND RELEASE APK
+  # BUILD + RELEASE
   # ============================================================
   build-release:
-    if: github.event_name == 'push'
+    if: >
+      github.event_name == 'push' ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        inputs.promote_tag == ''
+      )
+
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout source code
+      # Checkout
       # --------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
 
       # --------------------------------------------------------
-      # Java 17
+      # Java
       # --------------------------------------------------------
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -74,50 +100,81 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Prepare Android signing key
+      # Determine release information
+      # --------------------------------------------------------
+      - name: Determine version
+        id: version
+        shell: bash
+
+        run: |
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+
+            TAG="${GITHUB_REF_NAME}"
+
+          else
+
+            VERSION="${{ inputs.version }}"
+            TYPE="${{ inputs.release_type }}"
+
+            if [ "$TYPE" = "test" ]; then
+              TAG="v${VERSION}-test"
+            else
+              TAG="v${VERSION}"
+            fi
+
+          fi
+
+
+          CODE="${TAG#v}"
+          CODE="${CODE%%-*}"
+
+
+          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
+            echo "Invalid version/tag: $TAG"
+            exit 1
+          fi
+
+
+          if [[ "$TAG" == *-test ]]; then
+            TYPE="test"
+          else
+            TYPE="stable"
+          fi
+
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "name=1.0.$CODE" >> "$GITHUB_OUTPUT"
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+
+
+          echo "================================"
+          echo "Tag:     $TAG"
+          echo "Version: 1.0.$CODE"
+          echo "Type:    $TYPE"
+          echo "================================"
+
+
+      # --------------------------------------------------------
+      # Prepare signing key
       # --------------------------------------------------------
       - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
         run: |
+
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "KEYSTORE_BASE64 GitHub secret is required."
+            echo "ERROR: KEYSTORE_BASE64 secret is missing."
             exit 1
           fi
+
 
           mkdir -p app
 
+
           echo "$KEYSTORE_BASE64" | base64 --decode > app/release-key.jks
-
-
-      # --------------------------------------------------------
-      # Calculate version from Git tag
-      #
-      # v69       -> versionCode 69
-      # v69-test  -> versionCode 69
-      #
-      # versionName:
-      # 1.0.69
-      # --------------------------------------------------------
-      - name: Calculate Android version
-        id: version
-        shell: bash
-
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-
-          CODE="${TAG#v}"
-          CODE="${CODE%%-*}"
-
-          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
-            echo "Tag must look like v69 or v69-test."
-            echo "Received: $TAG"
-            exit 1
-          fi
-
-          echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "name=1.0.$CODE" >> "$GITHUB_OUTPUT"
 
 
       # --------------------------------------------------------
@@ -132,14 +189,16 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
 
         run: |
+
           gradle --no-daemon assembleRelease
 
 
       # --------------------------------------------------------
-      # Verify APK exists
+      # Verify APK
       # --------------------------------------------------------
       - name: Verify APK
         run: |
+
           test -f app/build/outputs/apk/release/app-release.apk
 
 
@@ -148,37 +207,39 @@ jobs:
       # --------------------------------------------------------
       - name: Rename APK
         run: |
-          cp app/build/outputs/apk/release/app-release.apk HBStoreHub.apk
+
+          cp \
+            app/build/outputs/apk/release/app-release.apk \
+            HBStoreHub.apk
 
 
-      # ========================================================
-      # CREATE GITHUB RELEASE
-      # ========================================================
-      - name: Create GitHub release
+      # --------------------------------------------------------
+      # Create GitHub Release
+      # --------------------------------------------------------
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
 
         run: |
 
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ steps.version.outputs.tag }}"
+          TYPE="${{ steps.version.outputs.type }}"
 
 
-          # ----------------------------------------------------
-          # TEST RELEASE
-          # ----------------------------------------------------
-          if [[ "$TAG" == *-test ]]; then
+          if [ "$TYPE" = "test" ]; then
+
+            echo "Creating TEST release..."
 
             gh release create "$TAG" HBStoreHub.apk \
               --repo "$GITHUB_REPOSITORY" \
               --title "HB Store Hub ${TAG} (TEST)" \
-              --notes "Admin test release. Shops and storekeepers continue using the latest stable release." \
+              --notes "Admin-only test release. Shops and storekeepers remain on the current stable version." \
               --prerelease
 
 
-          # ----------------------------------------------------
-          # STABLE RELEASE
-          # ----------------------------------------------------
           else
+
+            echo "Creating STABLE release..."
 
             gh release create "$TAG" HBStoreHub.apk \
               --repo "$GITHUB_REPOSITORY" \
