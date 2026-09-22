@@ -1,249 +1,382 @@
-name: Release Storekeeper APK
+name: Release APK
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  release-storekeeper:
+  release:
     runs-on: ubuntu-latest
 
     steps:
 
-      # 1. Checkout Storekeeper source
-      - name: Checkout Storekeeper source
+      # ==================================================
+      # 1. Checkout repository
+      # ==================================================
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Find / extract Android project
-      - name: Find Android project
+
+      # ==================================================
+      # 2. Find and extract Android ZIP
+      # ==================================================
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
 
-          echo "================================"
-          echo "Searching for Android project..."
-          echo "================================"
+          echo "======================================"
+          echo "Searching for Android project ZIP..."
+          echo "======================================"
 
-          # First check if project already exists
-          SETTINGS=$(find . -type f \( \
-            -name "settings.gradle" \
-            -o -name "settings.gradle.kts" \
-          \) -not -path "./.git/*" | head -n 1)
+          ZIP="$(find . \
+            -maxdepth 4 \
+            -type f \
+            -iname 'HBStoreHubAndroid*.zip' \
+            -not -path './project/*' \
+            | head -n 1)"
 
-          # If not found, extract Storekeeper ZIP
-          if [ -z "$SETTINGS" ]; then
-
-            ZIP_FILE="HBStoreHubAndroid_StorekeeperVibrant.zip"
-
-            if [ ! -f "$ZIP_FILE" ]; then
-              echo "ERROR: $ZIP_FILE not found."
-              echo ""
-              echo "Files available in repository:"
-              find . -maxdepth 3 -type f \
-                -not -path "./.git/*" | head -200
-              exit 1
-            fi
-
-            echo "Android project not found directly."
-            echo "Extracting: $ZIP_FILE"
-
-            mkdir -p android-project
-
-            unzip -q "$ZIP_FILE" -d android-project
-
-            echo "ZIP extracted."
-
-            SETTINGS=$(find android-project -type f \( \
-              -name "settings.gradle" \
-              -o -name "settings.gradle.kts" \
-            \) | head -n 1)
-          fi
-
-          if [ -z "$SETTINGS" ]; then
+          if [ -z "$ZIP" ]; then
             echo ""
-            echo "ERROR: settings.gradle not found after extraction."
+            echo "ERROR: HBStoreHubAndroid ZIP not found."
             echo ""
-            echo "Extracted files:"
-            find android-project -maxdepth 5 -type f | head -300
+            echo "Files found in repository:"
+            find . -maxdepth 4 -type f | head -300
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS")
+          echo ""
+          echo "ZIP found:"
+          echo "$ZIP"
+          echo ""
+
+          rm -rf project
+          mkdir -p project
+
+          echo "Extracting ZIP..."
+          unzip -o "$ZIP" -d project
 
           echo ""
-          echo "Android project found:"
-          echo "$PROJECT_DIR"
+          echo "Searching for Gradle project..."
+
+          SETTINGS="$(find project \
+            -type f \
+            \( \
+              -name 'settings.gradle' \
+              -o \
+              -name 'settings.gradle.kts' \
+            \) \
+            | head -n 1)"
+
+          if [ -z "$SETTINGS" ]; then
+            echo ""
+            echo "ERROR: settings.gradle or settings.gradle.kts not found."
+            echo ""
+            echo "Extracted files:"
+            find project -maxdepth 7 -type f | head -300
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS")"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # 3. Set version
-      - name: Set version 1.0.99 / code 99
-        shell: bash
-        run: |
-          set -e
+          echo ""
+          echo "Android project directory:"
+          echo "$PROJECT_DIR"
+          echo ""
 
-          GRADLE_FILE="$PROJECT_DIR/app/build.gradle"
+          ls -la "$PROJECT_DIR"
 
-          if [ ! -f "$GRADLE_FILE" ]; then
-            GRADLE_FILE="$PROJECT_DIR/app/build.gradle.kts"
-          fi
 
-          if [ ! -f "$GRADLE_FILE" ]; then
-            echo "ERROR: app Gradle file not found."
-            echo ""
-            find "$PROJECT_DIR" -maxdepth 3 -type f
-            exit 1
-          fi
-
-          echo "Using Gradle file:"
-          echo "$GRADLE_FILE"
-
-          python3 - "$GRADLE_FILE" <<'PY'
-          import sys
-          import re
-
-          path = sys.argv[1]
-
-          with open(path, "r", encoding="utf-8") as f:
-              text = f.read()
-
-          # Groovy
-          text = re.sub(
-              r'versionCode\s*(?:=)?\s*\d+',
-              'versionCode 99',
-              text,
-              count=1
-          )
-
-          text = re.sub(
-              r'versionName\s*(?:=)?\s*"[^"]+"',
-              'versionName "1.0.99"',
-              text,
-              count=1
-          )
-
-          # Kotlin DSL
-          text = re.sub(
-              r'versionCode\s*=\s*\d+',
-              'versionCode = 99',
-              text,
-              count=1
-          )
-
-          text = re.sub(
-              r'versionName\s*=\s*"[^"]+"',
-              'versionName = "1.0.99"',
-              text,
-              count=1
-          )
-
-          with open(path, "w", encoding="utf-8") as f:
-              f.write(text)
-
-          print("Version set:")
-          print("versionName = 1.0.99")
-          print("versionCode = 99")
-          PY
-
-      # 4. Setup Java
+      # ==================================================
+      # 3. Java 17
+      # ==================================================
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      # 5. Setup Android SDK
+
+      # ==================================================
+      # 4. Android SDK
+      # ==================================================
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
-      # 6. Install Gradle
+
+      # ==================================================
+      # 5. Install Gradle
+      # ==================================================
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: '8.9'
 
-      # 7. Build APK
-      - name: Build Storekeeper release APK
+
+      # ==================================================
+      # 6. Generate Gradle Wrapper
+      # ==================================================
+      - name: Generate Gradle Wrapper
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          echo "================================"
-          echo "Building Storekeeper release APK"
-          echo "================================"
+          echo "Generating Gradle wrapper..."
 
-          gradle clean assembleRelease --no-daemon
+          gradle wrapper --gradle-version 8.9
 
-      # 8. Find APK
-      - name: Find APK
+          chmod +x gradlew
+
+          echo "Gradle wrapper ready."
+
+
+      # ==================================================
+      # 7. Enable AndroidX
+      # ==================================================
+      - name: Enable AndroidX
+        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/release" \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)
+          touch gradle.properties
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: Storekeeper APK not found."
+          if ! grep -q "^android.useAndroidX=" gradle.properties; then
+            echo "android.useAndroidX=true" >> gradle.properties
+          fi
 
-            echo ""
-            echo "APK output files:"
-            find "$PROJECT_DIR/app/build/outputs" \
-              -type f 2>/dev/null || true
+          if ! grep -q "^android.enableJetifier=" gradle.properties; then
+            echo "android.enableJetifier=true" >> gradle.properties
+          fi
+
+          echo ""
+          echo "gradle.properties:"
+          cat gradle.properties
+
+
+      # ==================================================
+      # 8. Set Android version
+      # ==================================================
+      - name: Set version
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          # IMPORTANT:
+          # export makes these variables available to Python
+          export VERSION_CODE="${GITHUB_RUN_NUMBER}"
+          export VERSION_NAME="1.0.${VERSION_CODE}"
+
+          # Make them available to following GitHub Actions steps
+          echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=${VERSION_NAME}" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "======================================"
+          echo "Version information"
+          echo "======================================"
+          echo "Version Code : ${VERSION_CODE}"
+          echo "Version Name : ${VERSION_NAME}"
+          echo ""
+
+          if [ ! -f "app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle not found."
+
+            find . -maxdepth 5 -type f | head -300
 
             exit 1
           fi
 
-          echo "APK found:"
-          ls -lh "$APK"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
 
-          cp "$APK" "Storekeeper-v1.0.99.apk"
+          path = Path("app/build.gradle")
+
+          text = path.read_text()
+
+          version_code = os.environ["VERSION_CODE"]
+          version_name = os.environ["VERSION_NAME"]
+
+          # ------------------------------------------
+          # Update versionCode
+          # ------------------------------------------
+          text, count_code = re.subn(
+              r'(\bversionCode\s+)\d+',
+              rf'\g<1>{version_code}',
+              text,
+              count=1
+          )
+
+          # ------------------------------------------
+          # Update versionName
+          # ------------------------------------------
+          text, count_name = re.subn(
+              r'(\bversionName\s+)(["\']).*?\2',
+              rf'\g<1>"{version_name}"',
+              text,
+              count=1
+          )
+
+          if count_code == 0:
+              raise SystemExit(
+                  "ERROR: versionCode not found in app/build.gradle"
+              )
+
+          if count_name == 0:
+              raise SystemExit(
+                  "ERROR: versionName not found in app/build.gradle"
+              )
+
+          path.write_text(text)
+
+          print("")
+          print("Version updated successfully.")
+          print(f"versionCode = {version_code}")
+          print(f"versionName = {version_name}")
+          PY
 
           echo ""
-          echo "Created:"
-          ls -lh "Storekeeper-v1.0.99.apk"
+          echo "Final version settings:"
+          grep -nE "versionCode|versionName" app/build.gradle
 
-      # 9. Checkout public update repository
-      - name: Checkout public update repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.UPDATE_REPO }}
-          token: ${{ secrets.UPDATE_REPO_TOKEN }}
-          path: public-update-repo
 
-      # 10. Publish APK
-      - name: Publish Storekeeper APK
+      # ==================================================
+      # 9. Restore existing signing key
+      # ==================================================
+      - name: Restore signing key
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         shell: bash
         run: |
           set -e
 
-          cd public-update-repo
+          echo "======================================"
+          echo "Checking signing key..."
+          echo "======================================"
 
-          mkdir -p storekeeper
+          DEST="$PROJECT_DIR/app/release-key.jks"
 
-          cp "../Storekeeper-v1.0.99.apk" \
-             "storekeeper/Storekeeper.apk"
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo ""
+            echo "ERROR: KEYSTORE_PASSWORD secret is missing."
+            exit 1
+          fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -z "$KEY_ALIAS" ]; then
+            echo ""
+            echo "ERROR: KEY_ALIAS secret is missing."
+            exit 1
+          fi
 
-          git add storekeeper/Storekeeper.apk
+          if [ ! -f "hbstore-key.jks" ]; then
+            echo ""
+            echo "ERROR: hbstore-key.jks not found in repository."
+            echo ""
+            echo "A new signing key will NOT be generated."
+            echo "This protects existing app updates."
+            exit 1
+          fi
 
-          # Commit only if APK actually changed
-          if git diff --cached --quiet; then
-            echo "No changes to publish."
-          else
-            git commit -m "Release Storekeeper v1.0.99"
-            git push
+          mkdir -p "$PROJECT_DIR/app"
+
+          cp "hbstore-key.jks" "$DEST"
+
+          if [ ! -s "$DEST" ]; then
+            echo ""
+            echo "ERROR: release-key.jks is empty."
+            exit 1
+          fi
+
+          echo ""
+          echo "Existing signing key restored successfully."
+          echo "Key location:"
+          echo "$DEST"
+
+
+      # ==================================================
+      # 10. Build signed release APK
+      # ==================================================
+      - name: Build signed release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x gradlew
+
+          echo "======================================"
+          echo "Building signed release APK..."
+          echo "======================================"
+
+          ./gradlew clean assembleRelease --no-daemon --stacktrace
+
+          echo ""
+          echo "Build completed successfully."
+
+
+      # ==================================================
+      # 11. Prepare APK
+      # ==================================================
+      - name: Prepare APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo ""
+            echo "ERROR: app-release.apk not found."
 
             echo ""
-            echo "================================"
-            echo "Storekeeper v1.0.99 released"
-            echo "Version code: 99"
-            echo "================================"
+            echo "Available output files:"
+            find "$PROJECT_DIR/app/build/outputs" \
+              -type f \
+              2>/dev/null || true
+
+            exit 1
           fi
+
+          cp "$APK" HBStoreHub.apk
+
+          echo ""
+          echo "======================================"
+          echo "APK ready"
+          echo "======================================"
+
+          ls -lh HBStoreHub.apk
+
+
+      # ==================================================
+      # 12. Upload APK artifact
+      # ==================================================
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HBStoreHub-APK
+          path: HBStoreHub.apk
+          if-no-files-found: error
+
+
+      # ==================================================
+      # 13. Create GitHub Release
+      # ==================================================
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_CODE }}
+          name: HB Store Hub v${{ env.VERSION_NAME }}
+          generate_release_notes: true
+          files: HBStoreHub.apk
