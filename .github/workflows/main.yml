@@ -11,35 +11,76 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. Checkout Storekeeper source
       - name: Checkout Storekeeper source
         uses: actions/checkout@v4
 
+      # 2. Find / extract Android project
       - name: Find Android project
+        shell: bash
         run: |
           set -e
 
+          echo "================================"
           echo "Searching for Android project..."
+          echo "================================"
 
+          # First check if project already exists
           SETTINGS=$(find . -type f \( \
             -name "settings.gradle" \
             -o -name "settings.gradle.kts" \
           \) -not -path "./.git/*" | head -n 1)
 
+          # If not found, extract Storekeeper ZIP
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found."
-            echo "Files in repository:"
-            find . -maxdepth 5 -type f | head -200
+
+            ZIP_FILE="HBStoreHubAndroid_StorekeeperVibrant.zip"
+
+            if [ ! -f "$ZIP_FILE" ]; then
+              echo "ERROR: $ZIP_FILE not found."
+              echo ""
+              echo "Files available in repository:"
+              find . -maxdepth 3 -type f \
+                -not -path "./.git/*" | head -200
+              exit 1
+            fi
+
+            echo "Android project not found directly."
+            echo "Extracting: $ZIP_FILE"
+
+            mkdir -p android-project
+
+            unzip -q "$ZIP_FILE" -d android-project
+
+            echo "ZIP extracted."
+
+            SETTINGS=$(find android-project -type f \( \
+              -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \
+            \) | head -n 1)
+          fi
+
+          if [ -z "$SETTINGS" ]; then
+            echo ""
+            echo "ERROR: settings.gradle not found after extraction."
+            echo ""
+            echo "Extracted files:"
+            find android-project -maxdepth 5 -type f | head -300
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
+          echo ""
           echo "Android project found:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+      # 3. Set version
       - name: Set version 1.0.99 / code 99
+        shell: bash
         run: |
           set -e
 
@@ -51,10 +92,13 @@ jobs:
 
           if [ ! -f "$GRADLE_FILE" ]; then
             echo "ERROR: app Gradle file not found."
+            echo ""
+            find "$PROJECT_DIR" -maxdepth 3 -type f
             exit 1
           fi
 
-          echo "Using: $GRADLE_FILE"
+          echo "Using Gradle file:"
+          echo "$GRADLE_FILE"
 
           python3 - "$GRADLE_FILE" <<'PY'
           import sys
@@ -67,14 +111,14 @@ jobs:
 
           # Groovy
           text = re.sub(
-              r'versionCode\s*=?\s*\d+',
+              r'versionCode\s*(?:=)?\s*\d+',
               'versionCode 99',
               text,
               count=1
           )
 
           text = re.sub(
-              r'versionName\s*=?\s*"[^"]+"',
+              r'versionName\s*(?:=)?\s*"[^"]+"',
               'versionName "1.0.99"',
               text,
               count=1
@@ -98,41 +142,60 @@ jobs:
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
 
-          print("Version set to:")
+          print("Version set:")
           print("versionName = 1.0.99")
           print("versionCode = 99")
           PY
 
+      # 4. Setup Java
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # 5. Setup Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # 6. Install Gradle
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      # 7. Build APK
       - name: Build Storekeeper release APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -e
 
+          echo "================================"
+          echo "Building Storekeeper release APK"
+          echo "================================"
+
           gradle clean assembleRelease --no-daemon
 
+      # 8. Find APK
       - name: Find APK
+        shell: bash
         run: |
           set -e
 
           APK=$(find "$PROJECT_DIR/app/build/outputs/apk/release" \
-            -type f -name "*.apk" | head -n 1)
+            -type f \
+            -name "*.apk" \
+            | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: Storekeeper APK not found."
+
+            echo ""
+            echo "APK output files:"
+            find "$PROJECT_DIR/app/build/outputs" \
+              -type f 2>/dev/null || true
+
             exit 1
           fi
 
@@ -141,6 +204,11 @@ jobs:
 
           cp "$APK" "Storekeeper-v1.0.99.apk"
 
+          echo ""
+          echo "Created:"
+          ls -lh "Storekeeper-v1.0.99.apk"
+
+      # 9. Checkout public update repository
       - name: Checkout public update repository
         uses: actions/checkout@v4
         with:
@@ -148,7 +216,9 @@ jobs:
           token: ${{ secrets.UPDATE_REPO_TOKEN }}
           path: public-update-repo
 
+      # 10. Publish APK
       - name: Publish Storekeeper APK
+        shell: bash
         run: |
           set -e
 
@@ -164,11 +234,16 @@ jobs:
 
           git add storekeeper/Storekeeper.apk
 
-          git commit -m "Release Storekeeper v1.0.99"
+          # Commit only if APK actually changed
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+          else
+            git commit -m "Release Storekeeper v1.0.99"
+            git push
 
-          git push
-
-          echo "================================"
-          echo "Storekeeper v1.0.99 released"
-          echo "Version code: 99"
-          echo "================================"                    
+            echo ""
+            echo "================================"
+            echo "Storekeeper v1.0.99 released"
+            echo "Version code: 99"
+            echo "================================"
+          fi
