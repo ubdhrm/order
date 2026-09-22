@@ -18,21 +18,26 @@ jobs:
         run: |
           set -e
 
-          SETTINGS="$(find . \
-            -name settings.gradle \
-            -o -name settings.gradle.kts | head -n 1)"
+          echo "Searching for Android project..."
+
+          SETTINGS=$(find . -type f \( \
+            -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+          \) -not -path "./.git/*" | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "Android project not found."
+            echo "ERROR: settings.gradle not found."
+            echo "Files in repository:"
+            find . -maxdepth 5 -type f | head -200
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$SETTINGS")"
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          echo "Android project found:"
+          echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Android project:"
-          echo "$PROJECT_DIR"
 
       - name: Set version 1.0.99 / code 99
         run: |
@@ -41,33 +46,51 @@ jobs:
           GRADLE_FILE="$PROJECT_DIR/app/build.gradle"
 
           if [ ! -f "$GRADLE_FILE" ]; then
-            echo "app/build.gradle not found."
+            GRADLE_FILE="$PROJECT_DIR/app/build.gradle.kts"
+          fi
+
+          if [ ! -f "$GRADLE_FILE" ]; then
+            echo "ERROR: app Gradle file not found."
             exit 1
           fi
 
-          python3 - <<'PY'
-          import os
+          echo "Using: $GRADLE_FILE"
+
+          python3 - "$GRADLE_FILE" <<'PY'
+          import sys
           import re
 
-          path = os.path.join(
-              os.environ["PROJECT_DIR"],
-              "app",
-              "build.gradle"
-          )
+          path = sys.argv[1]
 
           with open(path, "r", encoding="utf-8") as f:
               text = f.read()
 
+          # Groovy
           text = re.sub(
-              r'versionCode\s+\d+',
+              r'versionCode\s*=?\s*\d+',
               'versionCode 99',
               text,
               count=1
           )
 
           text = re.sub(
-              r'versionName\s+"[^"]+"',
+              r'versionName\s*=?\s*"[^"]+"',
               'versionName "1.0.99"',
+              text,
+              count=1
+          )
+
+          # Kotlin DSL
+          text = re.sub(
+              r'versionCode\s*=\s*\d+',
+              'versionCode = 99',
+              text,
+              count=1
+          )
+
+          text = re.sub(
+              r'versionName\s*=\s*"[^"]+"',
+              'versionName = "1.0.99"',
               text,
               count=1
           )
@@ -75,16 +98,16 @@ jobs:
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
 
-          print("Version updated:")
-          print("versionCode 99")
-          print('versionName "1.0.99"')
+          print("Version set to:")
+          print("versionName = 1.0.99")
+          print("versionCode = 99")
           PY
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -92,7 +115,7 @@ jobs:
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
       - name: Build Storekeeper release APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -105,19 +128,18 @@ jobs:
         run: |
           set -e
 
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/release" \
-            -type f -name '*.apk' | head -n 1)"
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/release" \
+            -type f -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "Storekeeper APK not found."
+            echo "ERROR: Storekeeper APK not found."
             exit 1
           fi
 
-          echo "APK=$APK" >> "$GITHUB_ENV"
+          echo "APK found:"
+          ls -lh "$APK"
 
           cp "$APK" "Storekeeper-v1.0.99.apk"
-
-          ls -lh "Storekeeper-v1.0.99.apk"
 
       - name: Checkout public update repository
         uses: actions/checkout@v4
@@ -146,4 +168,7 @@ jobs:
 
           git push
 
-          echo "Storekeeper v1.0.99 published successfully."
+          echo "================================"
+          echo "Storekeeper v1.0.99 released"
+          echo "Version code: 99"
+          echo "================================"                    
