@@ -39,26 +39,18 @@ jobs:
             | head -n 1)"
 
           if [ -z "$ZIP" ]; then
-            echo ""
             echo "ERROR: HBStoreHubAndroid ZIP not found."
-            echo ""
-            echo "Files found in repository:"
             find . -maxdepth 4 -type f | head -300
             exit 1
           fi
 
-          echo ""
-          echo "ZIP found:"
-          echo "$ZIP"
-          echo ""
+          echo "ZIP found: $ZIP"
 
           rm -rf project
           mkdir -p project
 
-          echo "Extracting ZIP..."
           unzip -o "$ZIP" -d project
 
-          echo ""
           echo "Searching for Gradle project..."
 
           SETTINGS="$(find project \
@@ -71,10 +63,7 @@ jobs:
             | head -n 1)"
 
           if [ -z "$SETTINGS" ]; then
-            echo ""
             echo "ERROR: settings.gradle or settings.gradle.kts not found."
-            echo ""
-            echo "Extracted files:"
             find project -maxdepth 7 -type f | head -300
             exit 1
           fi
@@ -83,10 +72,8 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo ""
           echo "Android project directory:"
           echo "$PROJECT_DIR"
-          echo ""
 
           ls -la "$PROJECT_DIR"
 
@@ -126,8 +113,6 @@ jobs:
         run: |
           set -e
 
-          echo "Generating Gradle wrapper..."
-
           gradle wrapper --gradle-version 8.9
 
           chmod +x gradlew
@@ -154,7 +139,6 @@ jobs:
             echo "android.enableJetifier=true" >> gradle.properties
           fi
 
-          echo ""
           echo "gradle.properties:"
           cat gradle.properties
 
@@ -168,28 +152,21 @@ jobs:
         run: |
           set -e
 
-          # IMPORTANT:
-          # export makes these variables available to Python
           export VERSION_CODE="${GITHUB_RUN_NUMBER}"
           export VERSION_NAME="1.0.${VERSION_CODE}"
 
-          # Make them available to following GitHub Actions steps
           echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
           echo "VERSION_NAME=${VERSION_NAME}" >> "$GITHUB_ENV"
 
-          echo ""
           echo "======================================"
           echo "Version information"
           echo "======================================"
           echo "Version Code : ${VERSION_CODE}"
           echo "Version Name : ${VERSION_NAME}"
-          echo ""
 
           if [ ! -f "app/build.gradle" ]; then
             echo "ERROR: app/build.gradle not found."
-
             find . -maxdepth 5 -type f | head -300
-
             exit 1
           fi
 
@@ -199,15 +176,11 @@ jobs:
           import re
 
           path = Path("app/build.gradle")
-
           text = path.read_text()
 
           version_code = os.environ["VERSION_CODE"]
           version_name = os.environ["VERSION_NAME"]
 
-          # ------------------------------------------
-          # Update versionCode
-          # ------------------------------------------
           text, count_code = re.subn(
               r'(\bversionCode\s+)\d+',
               rf'\g<1>{version_code}',
@@ -215,9 +188,6 @@ jobs:
               count=1
           )
 
-          # ------------------------------------------
-          # Update versionName
-          # ------------------------------------------
           text, count_name = re.subn(
               r'(\bversionName\s+)(["\']).*?\2',
               rf'\g<1>"{version_name}"',
@@ -237,14 +207,11 @@ jobs:
 
           path.write_text(text)
 
-          print("")
           print("Version updated successfully.")
           print(f"versionCode = {version_code}")
           print(f"versionName = {version_name}")
           PY
 
-          echo ""
-          echo "Final version settings:"
           grep -nE "versionCode|versionName" app/build.gradle
 
 
@@ -266,23 +233,18 @@ jobs:
           DEST="$PROJECT_DIR/app/release-key.jks"
 
           if [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo ""
             echo "ERROR: KEYSTORE_PASSWORD secret is missing."
             exit 1
           fi
 
           if [ -z "$KEY_ALIAS" ]; then
-            echo ""
             echo "ERROR: KEY_ALIAS secret is missing."
             exit 1
           fi
 
           if [ ! -f "hbstore-key.jks" ]; then
-            echo ""
             echo "ERROR: hbstore-key.jks not found in repository."
-            echo ""
             echo "A new signing key will NOT be generated."
-            echo "This protects existing app updates."
             exit 1
           fi
 
@@ -291,15 +253,11 @@ jobs:
           cp "hbstore-key.jks" "$DEST"
 
           if [ ! -s "$DEST" ]; then
-            echo ""
             echo "ERROR: release-key.jks is empty."
             exit 1
           fi
 
-          echo ""
           echo "Existing signing key restored successfully."
-          echo "Key location:"
-          echo "$DEST"
 
 
       # ==================================================
@@ -322,7 +280,6 @@ jobs:
 
           ./gradlew clean assembleRelease --no-daemon --stacktrace
 
-          echo ""
           echo "Build completed successfully."
 
 
@@ -337,11 +294,8 @@ jobs:
           APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo ""
             echo "ERROR: app-release.apk not found."
 
-            echo ""
-            echo "Available output files:"
             find "$PROJECT_DIR/app/build/outputs" \
               -type f \
               2>/dev/null || true
@@ -351,7 +305,6 @@ jobs:
 
           cp "$APK" HBStoreHub.apk
 
-          echo ""
           echo "======================================"
           echo "APK ready"
           echo "======================================"
